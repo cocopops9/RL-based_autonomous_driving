@@ -1,0 +1,9 @@
+{
+  "mean_return": 27.346290183941562,
+  "std_return": 6.3230834423048625,
+  "crash_rate": 0.175,
+  "n": 40,
+  "seed_base": 12345,
+  "ego_spacing": 2.0,
+  "note": "Reference line for Figure 1: heuristic measured in the TRAINING environment on the SELECTION seeds, matching the greedy series it is drawn against."
+}

@@ -50,7 +50,7 @@ def heuristic_action(obs):
     others = obs[1:]
 
     # -- Thresholds (calibrated against default Kinematics normalization) --
-    # Relative y ~ 0.333 per lane; relative x units ~ fraction of 100m clip.
+    # Relative y ~ 0.333 per lane; relative x units ~ fraction of the +/-200 m x normalization, so 0.10 is about 20 m.
     SAME_LANE_Y = 0.15            # |rel_y| < this -> same lane
     CLOSE_DIST = 0.10             # imminent collision range
     MEDIUM_DIST = 0.25            # comfortable following distance
@@ -132,40 +132,38 @@ if __name__ == "__main__":
             "action": {"type": "DiscreteMetaAction"},
             "lanes_count": 3,
             "ego_spacing": 1.5,
+            "vehicles_count": 50,
+            "duration": 40,
         },
         render_mode="human" if render else None,
     )
 
-    num_episodes = 10
+    # Evaluate on the same held-out TEST seeds (90000+i) and the same episode
+    # count as the agent, so the baseline row of the report is a like-for-like
+    # comparison rather than a separate short seed-0 run.
+    num_episodes = 5 if render else 100
+    seed_base = 90000
     episode_returns = []
     episode_crashes = []
 
-    state, _ = env.reset(seed=0)
-    done, truncated = False, False
-    episode = 1
-    episode_steps = 0
-    episode_return = 0.0
-
-    while episode <= num_episodes:
-        episode_steps += 1
-        action = heuristic_action(state)
-        state, reward, done, truncated, _ = env.step(action)
-        if render:
-            env.render()
-        episode_return += reward
-
-        if done or truncated:
-            print(
-                f"Episode Num: {episode}  Episode T: {episode_steps}  "
-                f"Return: {episode_return:.3f}  Crash: {done}"
-            )
-            episode_returns.append(episode_return)
-            episode_crashes.append(done)
-
-            state, _ = env.reset()
-            episode += 1
-            episode_steps = 0
-            episode_return = 0.0
+    for ep in range(num_episodes):
+        state, _ = env.reset(seed=seed_base + ep)
+        done, truncated = False, False
+        episode_steps = 0
+        episode_return = 0.0
+        while not (done or truncated):
+            episode_steps += 1
+            action = heuristic_action(state)
+            state, reward, done, truncated, _ = env.step(action)
+            if render:
+                env.render()
+            episode_return += reward
+        print(
+            f"Episode Num: {ep+1}  Episode T: {episode_steps}  "
+            f"Return: {episode_return:.3f}  Crash: {done}"
+        )
+        episode_returns.append(episode_return)
+        episode_crashes.append(done)
 
     env.close()
 

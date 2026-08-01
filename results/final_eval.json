@@ -1,5 +1,202 @@
 {
-  "mean_return": 29.309071717892778,
-  "std_return": 0.8339520919530997,
-  "crash_rate": 0.0
+  "manual_control": {
+    "mean_return": 33.412,
+    "std_return": 0.496,
+    "crash_rate": 0.0,
+    "score": 33.412,
+    "n": 10,
+    "note": "human, interactive, not seed-matched"
+  },
+  "conservative_holdout": {
+    "mean_return": 29.132,
+    "std_return": 2.676,
+    "crash_rate": 0.01,
+    "se": 0.01,
+    "score": 29.032,
+    "n": 100,
+    "seed_base": 50000,
+    "note": "UNBIASED: seed block never used for tuning, diagnosis or filter selection"
+  },
+  "conservative": {
+    "mean_return": 29.327,
+    "std_return": 1.565,
+    "crash_rate": 0.02,
+    "se": 0.014,
+    "score": 29.127,
+    "n": 100
+  },
+  "strict": {
+    "mean_return": 29.352,
+    "std_return": 2.765,
+    "crash_rate": 0.06,
+    "se": 0.024,
+    "score": 28.752,
+    "n": 100
+  },
+  "smooth": {
+    "mean_return": 29.011,
+    "std_return": 3.978,
+    "crash_rate": 0.09,
+    "se": 0.029,
+    "score": 28.111,
+    "n": 100
+  },
+  "raw": {
+    "mean_return": 28.958,
+    "std_return": 4.315,
+    "crash_rate": 0.1,
+    "se": 0.03,
+    "score": 27.958,
+    "n": 100
+  },
+  "always_brake": {
+    "mean_return": 26.94,
+    "std_return": 4.176,
+    "crash_rate": 0.067,
+    "score": 26.27,
+    "n": 45,
+    "note": "constant SLOWER, trivial reference policy"
+  },
+  "baseline": {
+    "mean_return": 26.472,
+    "std_return": 6.953,
+    "crash_rate": 0.18,
+    "se": 0.038,
+    "score": 24.672,
+    "n": 100
+  },
+  "last_iterate": {
+    "mean_return": 26.322,
+    "std_return": 8.391,
+    "crash_rate": 0.31,
+    "se": 0.046,
+    "score": 23.222,
+    "n": 100
+  },
+  "heuristic_on_selection_seeds": {
+    "mean_return": 27.17,
+    "crash_rate": 0.225,
+    "n": 40,
+    "seed_base": 12345,
+    "note": "difficulty control: vs 18.0% on test seeds, z=0.61, not significant"
+  },
+  "chosen": "best",
+  "n_test_episodes": 100,
+  "env": {
+    "lanes_count": 3,
+    "ego_spacing": 1.5,
+    "vehicles_count": 50,
+    "duration": 40
+  },
+  "note": "TEST seeds 90000+i acted as a selection set for the filter choice; conservative_holdout (50000+i) is the unbiased estimate. Rows are written by run_final_eval.py; the paired_tests block is written by paired_tests.py from results/episode_vectors.json.",
+  "action_histogram": {
+    "LANE_LEFT": 0.0473,
+    "IDLE": 0.1667,
+    "LANE_RIGHT": 0.3266,
+    "FASTER": 0.0676,
+    "SLOWER": 0.3919,
+    "lane_change_share": 0.3739,
+    "mean_ego_vx": 0.2669,
+    "steps": 444,
+    "episodes": 12,
+    "seed_base": 90000,
+    "note": "raw greedy policy, no filter, canonical env (ego_spacing 1.5)"
+  },
+  "speed_cap_probe": {
+    "mean_return": 27.692,
+    "crash_rate": 0.111,
+    "crashes": 2,
+    "n": 18,
+    "seed_base": 90000,
+    "wilson_95_ci": [
+      0.031,
+      0.328
+    ],
+    "strict_crashes_same_seeds": 1,
+    "config": "CappedStrictFilter: StrictFilter + speed cap 0.30, no lane-change restriction",
+    "note": "Underpowered probe (n=18). Written by run_final_eval.py; interval and paired comparison by paired_tests.py."
+  },
+  "baseline_training_env": {
+    "mean_return": 27.346290183941562,
+    "std_return": 6.3230834423048625,
+    "crash_rate": 0.175,
+    "n": 40,
+    "seed_base": 12345,
+    "ego_spacing": 2.0,
+    "note": "Reference line for Figure 1: heuristic measured in the TRAINING environment on the SELECTION seeds, matching the greedy series it is drawn against."
+  },
+  "paired_tests": {
+    "vs_baseline": {
+      "raw": {
+        "baseline_only_crashes": 17,
+        "policy_only_crashes": 9,
+        "mcnemar_exact_p": 0.168638,
+        "return_diff": 2.486,
+        "paired_t": 2.9,
+        "paired_t_p": 0.004583,
+        "n": 100,
+        "holm_adjusted_p": 0.186279,
+        "significant_at_5pct": false
+      },
+      "smooth": {
+        "baseline_only_crashes": 16,
+        "policy_only_crashes": 7,
+        "mcnemar_exact_p": 0.09314,
+        "return_diff": 2.539,
+        "paired_t": 3.21,
+        "paired_t_p": 0.001806,
+        "n": 100,
+        "holm_adjusted_p": 0.186279,
+        "significant_at_5pct": false
+      },
+      "strict": {
+        "baseline_only_crashes": 16,
+        "policy_only_crashes": 4,
+        "mcnemar_exact_p": 0.011818,
+        "return_diff": 2.88,
+        "paired_t": 3.75,
+        "paired_t_p": 0.000294,
+        "n": 100,
+        "holm_adjusted_p": 0.035454,
+        "significant_at_5pct": true
+      },
+      "conservative": {
+        "baseline_only_crashes": 17,
+        "policy_only_crashes": 1,
+        "mcnemar_exact_p": 0.000145,
+        "return_diff": 2.855,
+        "paired_t": 4.27,
+        "paired_t_p": 4.5e-05,
+        "n": 100,
+        "holm_adjusted_p": 0.00058,
+        "significant_at_5pct": true
+      }
+    },
+    "conservative_vs_strict": {
+      "strict_only_crashes": 6,
+      "conservative_only_crashes": 2,
+      "mcnemar_exact_p": 0.289062
+    },
+    "always_brake_vs_raw": {
+      "brake_only_crashes": 3,
+      "raw_only_crashes": 6,
+      "mcnemar_exact_p": 0.507812,
+      "return_diff": 1.648,
+      "paired_t": 1.69,
+      "paired_t_p": 0.097169,
+      "n": 45,
+      "note": "Shared seeds 90000+i; paired test, not two-sample."
+    },
+    "speed_cap_probe": {
+      "crashes": 2,
+      "n": 18,
+      "crash_rate": 0.1111,
+      "wilson_95_ci": [
+        0.031,
+        0.328
+      ],
+      "strict_crashes_same_seeds": 1,
+      "note": "Underpowered: fails to show a benefit from the cap, too small to exclude one."
+    }
+  }
 }

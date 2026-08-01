@@ -1,18 +1,17 @@
 """
-Double DQN agent with Dueling architecture for the Highway-Env autonomous driving task.
+Double DQN agent with Dueling architecture for Highway-Env autonomous driving.
 
-Architecture rationale:
-- DQN is the standard baseline for discrete action spaces with continuous state input.
-- Double DQN (van Hasselt et al., 2016) decouples action selection from action evaluation
-  in the target computation, reducing the well-known overestimation bias of vanilla DQN.
-- Dueling architecture (Wang et al., 2016) separates the Q-function into a state-value
-  stream V(s) and an advantage stream A(s,a), which improves learning when many actions
-  have similar values -- a common situation in highway driving (e.g., IDLE and FASTER
-  are often near-equivalent when the lane is clear).
-
-The replay buffer is a standard circular buffer with uniform sampling.
+Key design decisions:
+- Double DQN target: decouples action selection (online net) from evaluation
+  (target net), reducing overestimation bias (van Hasselt et al., 2016).
+- Dueling architecture: decomposes Q(s,a) = V(s) + A(s,a) - mean(A), which
+  helps when many actions are near-equivalent (Wang et al., 2016).
+- Hard target updates every N steps for training stability.
+- Orthogonal weight initialization for better gradient flow at early training.
+- Warmup period: no gradient updates until the buffer has enough diverse samples.
 """
 
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -55,16 +54,13 @@ class ReplayBuffer:
 
 class DuelingQNetwork(nn.Module):
     """
-    Dueling network that outputs Q(s,a) = V(s) + A(s,a) - mean(A(s,.)).
-
-    The subtraction of mean(A) ensures identifiability: V(s) is forced to
-    approximate the true state value rather than being absorbed into A.
+    Q(s,a) = V(s) + A(s,a) - mean(A(s,.))
+    Mean subtraction ensures identifiability of V and A.
     """
 
-    def __init__(self, state_dim, action_dim, hidden_dim=256):
+    def __init__(self, state_dim, action_dim, hidden_dim=128):
         super().__init__()
 
-        # Shared feature extractor
         self.feature = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
@@ -72,25 +68,31 @@ class DuelingQNetwork(nn.Module):
             nn.ReLU(),
         )
 
-        # Value stream: V(s)
         self.value_stream = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Linear(hidden_dim // 2, 1),
         )
 
-        # Advantage stream: A(s, a)
         self.advantage_stream = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Linear(hidden_dim // 2, action_dim),
         )
 
+        self._init_weights()
+
+    def _init_weights(self):
+        """Orthogonal initialization for stable early training."""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight, gain=np.sqrt(2))
+                nn.init.zeros_(module.bias)
+
     def forward(self, x):
         features = self.feature(x)
-        value = self.value_stream(features)              # (batch, 1)
-        advantage = self.advantage_stream(features)       # (batch, action_dim)
-        # Combine: Q = V + (A - mean(A))
+        value = self.value_stream(features)
+        advantage = self.advantage_stream(features)
         q_values = value + advantage - advantage.mean(dim=1, keepdim=True)
         return q_values
 
@@ -100,100 +102,63 @@ class DuelingQNetwork(nn.Module):
 # ---------------------------------------------------------------------------
 
 class DQNAgent:
-    """
-    Double DQN agent with:
-    - Dueling Q-network
-    - Epsilon-greedy exploration with linear decay
-    - Soft target network updates (Polyak averaging)
-    - Gradient clipping for stability
-    """
+    """Double DQN agent with Dueling architecture."""
 
     def __init__(
         self,
         state_dim=25,
         action_dim=5,
-        hidden_dim=256,
+        hidden_dim=128,
         lr=5e-4,
         gamma=0.99,
-        buffer_capacity=15000,
+        buffer_capacity=50000,
         batch_size=64,
         epsilon_start=1.0,
         epsilon_end=0.05,
-        epsilon_decay_steps=10000,
-        tau=0.005,
+        epsilon_decay_steps=40000,
+        target_update_freq=200,
+        learning_starts=1000,
         device=None,
     ):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.gamma = gamma
         self.batch_size = batch_size
-        self.tau = tau
+        self.target_update_freq = target_update_freq
+        self.learning_starts = learning_starts
 
-        # Exploration schedule
         self.epsilon = epsilon_start
         self.epsilon_start = epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay_steps = epsilon_decay_steps
 
-        # Device
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
 
-        # Networks
         self.q_network = DuelingQNetwork(state_dim, action_dim, hidden_dim).to(self.device)
         self.target_network = DuelingQNetwork(state_dim, action_dim, hidden_dim).to(self.device)
         self.target_network.load_state_dict(self.q_network.state_dict())
         self.target_network.eval()
 
-        # Optimizer
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr)
-
-        # Replay buffer
         self.replay_buffer = ReplayBuffer(buffer_capacity)
-
-        # Step counter (for epsilon decay)
         self.total_steps = 0
 
-    # -------------------------------------------------------------------
-    # Action selection
-    # -------------------------------------------------------------------
-
     def select_action(self, state, evaluate=False):
-        """
-        Epsilon-greedy action selection.
-        During evaluation, always pick the greedy action (epsilon = 0).
-        """
         if not evaluate and random.random() < self.epsilon:
             return random.randint(0, self.action_dim - 1)
-
         with torch.no_grad():
             state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             q_values = self.q_network(state_tensor)
             return q_values.argmax(dim=1).item()
 
-    # -------------------------------------------------------------------
-    # Store transition
-    # -------------------------------------------------------------------
-
     def store_transition(self, state, action, reward, next_state, done):
         self.replay_buffer.push(state, action, reward, next_state, done)
 
-    # -------------------------------------------------------------------
-    # Training step
-    # -------------------------------------------------------------------
-
     def train_step(self):
-        """
-        Sample a minibatch from the replay buffer and perform one gradient
-        step on the Q-network using the Double DQN target:
-
-            y = r + gamma * Q_target(s', argmax_a Q_online(s', a)) * (1 - done)
-
-        Returns the mean loss (for logging), or None if the buffer is too small.
-        """
-        if len(self.replay_buffer) < self.batch_size:
+        if len(self.replay_buffer) < self.learning_starts:
             return None
 
         states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size)
@@ -204,64 +169,37 @@ class DQNAgent:
         next_states_t = torch.FloatTensor(next_states).to(self.device)
         dones_t = torch.FloatTensor(dones).to(self.device)
 
-        # Current Q-values: Q(s, a) for the actions actually taken
         current_q = self.q_network(states_t).gather(1, actions_t.unsqueeze(1)).squeeze(1)
 
-        # Double DQN target:
-        # 1. Use the ONLINE network to SELECT the best action in the next state
         with torch.no_grad():
             next_actions = self.q_network(next_states_t).argmax(dim=1)
-            # 2. Use the TARGET network to EVALUATE Q at that action
             next_q = self.target_network(next_states_t).gather(1, next_actions.unsqueeze(1)).squeeze(1)
             target_q = rewards_t + self.gamma * next_q * (1.0 - dones_t)
 
-        # Huber loss (smooth L1) is more robust to outliers than MSE
         loss = nn.SmoothL1Loss()(current_q, target_q)
 
         self.optimizer.zero_grad()
         loss.backward()
-        # Gradient clipping for stability
-        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=10.0)
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=1.0)
         self.optimizer.step()
-
-        # Soft-update the target network
-        self._soft_update()
-
-        # Decay epsilon
-        self._decay_epsilon()
 
         self.total_steps += 1
 
+        if self.total_steps % self.target_update_freq == 0:
+            self.target_network.load_state_dict(self.q_network.state_dict())
+
+        self._decay_epsilon()
         return loss.item()
 
-    # -------------------------------------------------------------------
-    # Target network update
-    # -------------------------------------------------------------------
-
-    def _soft_update(self):
-        """Polyak averaging: theta_target <- tau * theta_online + (1-tau) * theta_target."""
-        for target_param, online_param in zip(
-            self.target_network.parameters(), self.q_network.parameters()
-        ):
-            target_param.data.copy_(
-                self.tau * online_param.data + (1.0 - self.tau) * target_param.data
-            )
-
-    # -------------------------------------------------------------------
-    # Epsilon decay
-    # -------------------------------------------------------------------
-
     def _decay_epsilon(self):
-        """Linear decay from epsilon_start to epsilon_end over epsilon_decay_steps."""
         fraction = min(1.0, self.total_steps / self.epsilon_decay_steps)
         self.epsilon = self.epsilon_start + fraction * (self.epsilon_end - self.epsilon_start)
 
-    # -------------------------------------------------------------------
-    # Save / Load
-    # -------------------------------------------------------------------
-
     def save(self, path):
-        """Save model weights and training state."""
+        """Save the model for evaluation: online and target network weights,
+        epsilon, step counters and the optimizer state. The replay buffer is not
+        included; the full resumable checkpoint is written by
+        save_checkpoint()."""
         torch.save({
             "q_network": self.q_network.state_dict(),
             "target_network": self.target_network.state_dict(),
@@ -271,7 +209,8 @@ class DQNAgent:
         }, path)
 
     def load(self, path):
-        """Load model weights and training state."""
+        """Load a model saved by save(): network weights plus target network,
+        epsilon and step counters. Used for evaluation."""
         checkpoint = torch.load(path, map_location=self.device, weights_only=True)
         self.q_network.load_state_dict(checkpoint["q_network"])
         self.target_network.load_state_dict(checkpoint["target_network"])
@@ -282,3 +221,122 @@ class DQNAgent:
         if "total_steps" in checkpoint:
             self.total_steps = checkpoint["total_steps"]
         self.q_network.eval()
+
+    def save_checkpoint(self, path):
+        """
+        Save full training state for resumption: weights, optimizer,
+        replay buffer contents, exploration schedule, step counter, and
+        RNG states for Python random, NumPy, and PyTorch.
+
+        The write is ATOMIC: data is written to a temporary file first and
+        then renamed over the target, so a process kill mid-write (e.g.
+        Colab session termination) never corrupts an existing checkpoint.
+        """
+        # Convert deque of tuples to arrays for efficient serialization
+        buffer_list = list(self.replay_buffer.buffer)
+        if buffer_list:
+            states, actions, rewards, next_states, dones = zip(*buffer_list)
+            buffer_data = {
+                "states": np.array(states, dtype=np.float32),
+                "actions": np.array(actions, dtype=np.int64),
+                "rewards": np.array(rewards, dtype=np.float32),
+                "next_states": np.array(next_states, dtype=np.float32),
+                "dones": np.array(dones, dtype=np.float32),
+            }
+        else:
+            buffer_data = None
+
+        payload = {
+            "q_network": self.q_network.state_dict(),
+            "target_network": self.target_network.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "epsilon": self.epsilon,
+            "total_steps": self.total_steps,
+            "buffer_data": buffer_data,
+            "buffer_capacity": self.replay_buffer.buffer.maxlen,
+            "python_rng": random.getstate(),
+            "numpy_rng": np.random.get_state(),
+            "torch_rng": torch.get_rng_state().detach().cpu().to(torch.uint8).contiguous(),
+            "torch_cuda_rng": (torch.cuda.get_rng_state_all()
+                               if torch.cuda.is_available() else None),
+        }
+
+        # Atomic write: temp file in the same directory, then rename.
+        # Durable, rotated write:
+        # 1) write to tmp and fsync (forces DriveFS to upload the bytes,
+        #    not just cache them -- a Colab VM kill otherwise loses the write)
+        # 2) rotate the current checkpoint to .prev
+        # 3) rename tmp over the target
+        # A kill at any point leaves at least one complete checkpoint among
+        # {path, path.tmp, path.prev}; the loader tries them in that order.
+        tmp_path = path + ".tmp"
+        prev_path = path + ".prev"
+        torch.save(payload, tmp_path)
+        fd = os.open(tmp_path, os.O_RDWR)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        if os.path.exists(path):
+            os.replace(path, prev_path)
+        os.replace(tmp_path, path)
+
+    def load_checkpoint(self, path):
+        """
+        Load full training state. Restores replay buffer and RNG states
+        so that training resumes as close as possible to where it stopped.
+        """
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+
+        self.q_network.load_state_dict(checkpoint["q_network"])
+        self.target_network.load_state_dict(checkpoint["target_network"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        self.epsilon = checkpoint["epsilon"]
+        self.total_steps = checkpoint["total_steps"]
+
+        # Keep q_network in train mode for continued training
+        self.q_network.train()
+        self.target_network.eval()
+
+        # Restore replay buffer
+        buffer_data = checkpoint.get("buffer_data")
+        if buffer_data is not None:
+            self.replay_buffer = ReplayBuffer(checkpoint["buffer_capacity"])
+            n = len(buffer_data["states"])
+            for i in range(n):
+                self.replay_buffer.push(
+                    buffer_data["states"][i],
+                    int(buffer_data["actions"][i]),
+                    float(buffer_data["rewards"][i]),
+                    buffer_data["next_states"][i],
+                    float(buffer_data["dones"][i]),
+                )
+
+        # Restore RNG states. These only affect the reproducibility of future
+        # random draws, so a failure here (e.g. a GPU-saved torch RNG tensor
+        # that a different build rejects on set_rng_state) must NOT abort the
+        # resume: the network weights, optimizer and replay buffer are already
+        # restored above. Each RNG stream is restored independently.
+        def _try(label, fn):
+            try:
+                fn()
+            except Exception as e:
+                print(f"  note: could not restore {label} RNG state ({e}); "
+                      f"continuing without it.")
+
+        if "python_rng" in checkpoint:
+            _try("Python", lambda: random.setstate(checkpoint["python_rng"]))
+        if "numpy_rng" in checkpoint:
+            _try("NumPy", lambda: np.random.set_state(checkpoint["numpy_rng"]))
+        if "torch_rng" in checkpoint:
+            def _set_torch_rng():
+                st = checkpoint["torch_rng"]
+                # set_rng_state requires a CPU uint8 ByteTensor; coerce it,
+                # rebuilding from raw bytes to guarantee the exact type.
+                st = torch.ByteTensor(
+                    st.detach().cpu().to(torch.uint8).contiguous().numpy()
+                )
+                torch.set_rng_state(st)
+            _try("PyTorch", _set_torch_rng)
+        if checkpoint.get("torch_cuda_rng") is not None and torch.cuda.is_available():
+            _try("CUDA", lambda: torch.cuda.set_rng_state_all(checkpoint["torch_cuda_rng"]))

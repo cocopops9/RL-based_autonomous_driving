@@ -1,0 +1,251 @@
+\documentclass{article}
+
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+
+% Float placement: close to the defaults, so a page always keeps a healthy
+% amount of running text and floats cannot fragment a column.
+\renewcommand{\topfraction}{0.85}
+\renewcommand{\bottomfraction}{0.50}
+\renewcommand{\textfraction}{0.15}
+\renewcommand{\floatpagefraction}{0.70}
+\setcounter{topnumber}{2}
+\setcounter{bottomnumber}{1}
+\setcounter{totalnumber}{2}
+
+% Never strand a single line of a paragraph at a column boundary.
+\widowpenalty=10000
+\clubpenalty=10000
+\displaywidowpenalty=10000
+
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+\usepackage[accepted]{icml2021}
+
+% More breathing room around the affiliation footnote so it reads clearly as
+% a footnote rather than a continuation of the abstract into Section 1.
+\setlength{\skip\footins}{14pt}
+
+% Result macros: TEST seed set 90000+i, 100 episodes per configuration.
+\newcommand{\agentmean}{28.96}
+\newcommand{\agentstd}{4.32}
+\newcommand{\agentcrash}{10.0}
+\newcommand{\agenttestN}{100}
+\newcommand{\selmean}{30.06}
+\newcommand{\selcrash}{0}
+\newcommand{\basemean}{26.47}
+\newcommand{\basestd}{6.95}
+\newcommand{\basecrash}{18.0}
+\newcommand{\ghlink}{\url{https://github.com/cocopops9/RL-based_autonomous_driving}}
+
+\icmltitlerunning{A Double Dueling DQN Agent for Highway Driving}
+
+\begin{document}
+
+\twocolumn[
+\icmltitle{A Double Dueling DQN Agent for Highway Driving:\\
+Rule-Based Safety Filtering and a Crash-Level Diagnosis}
+
+\icmlsetsymbol{equal}{*}
+
+\begin{icmlauthorlist}
+\icmlauthor{Giuseppe D'Auria}{unipd}
+\end{icmlauthorlist}
+
+\icmlaffiliation{unipd}{University of Padova, Italy}
+\icmlcorrespondingauthor{Giuseppe D'Auria}{giuseppe.dauria@studenti.unipd.it}
+
+\icmlkeywords{Reinforcement Learning, UniPD, Autonomous Driving, DQN}
+
+\vskip 0.3in
+]
+
+\printAffiliationsAndNotice{}
+
+\begin{abstract}
+I implement a Double DQN agent with a Dueling architecture for highway driving among fifty vehicles and compare it against a defensive rule-based heuristic and a human driver. On held-out seeds the agent reaches \agentmean{} $\pm$ \agentstd{} return at a \agentcrash\% crash rate, against \basemean{} and \basecrash\% for the heuristic, but paired tests show the learned policy alone does not improve safety significantly. Adding a rule-based safety filter does: crashes fall to $1.0\%$ on a reserved seed block while return rises. A three-step filter ablation isolates discretionary lane changes, not speed, as the source of the residual collisions, and a crash-level diagnosis explains why: in every collision examined the striking vehicle was already visible in the observation, so the failures are of decision rather than of perception. A human baseline reaching $33.4$ return bounds what this interface allows. Throughout I use a training, selection and test seed split, which I found necessary because small-sample evaluation on this task is misleading enough to produce an apparent $0\%$ crash rate for a model that crashes on $10\%$ of held-out episodes. Code: \ghlink{}.
+\end{abstract}
+
+\vspace{2pt}
+
+\vfill\columnbreak
+\section{Problem and critical issues}
+\label{sec:problem}
+
+The environment is \texttt{highway-v0} from Highway-Env \cite{highwayenv}. The ego vehicle drives on a three lane highway among fifty vehicles governed by the Intelligent Driver Model; an episode lasts at most forty decision steps and terminates on collision. The observation is a $5\times 5$ kinematics matrix (ego plus the four nearest vehicles, features presence, $x$, $y$, $v_x$, $v_y$, the rows of the other vehicles relative to the ego), which I flatten to a 25 dimensional vector. The five discrete actions are \textsc{lane\_left}, \textsc{idle}, \textsc{lane\_right}, \textsc{faster}, \textsc{slower}. The per step reward is a weighted sum of a high-speed term (coefficient 0.4) and a right-lane term (0.1) with a collision penalty (coefficient $-1$), which the environment then normalizes into $[0,1]$; the coefficients above are the pre-normalization values. The global seed is fixed to 0.
+
+Three properties of the task shaped every design decision, and I consider them its critical issues.
+
+\textbf{Partial observability, and how little of it actually binds.} The state holds only the four nearest vehicles, and the default kinematic observation sets \texttt{see\_behind}${=}$\texttt{False}, so traffic astern is invisible entirely. I expected this to dominate and it does not; I had asserted otherwise before measuring. Two shipped measurements. The road is not crowded at the scale that matters: on average $4.4$ vehicles lie within $100$~m ahead (maximum $6$), so four slots capture nearly all traffic in front. And instrumenting every crash to identify the collision partner, in all six diagnosed the partner had been in the previous observation and lay $17$ to $30$~m directly \emph{ahead} (\texttt{results/crash\_diagnosis.json}). The agent is not ambushed by what it cannot see; it drives into what it can. The residual crashes are a failure of policy, of when to brake and when to commit to a gap, not of perception. The rear blind spot matters only for lane changes into a faster vehicle astern.
+
+\textbf{A degenerate safe policy.} A constant \textsc{slower} policy collects a return of $26.94\pm4.18$ at a $6.7\%$ crash rate ($3$ of $45$ test episodes), so a learning agent can collapse into timidity and still look acceptable. Two things follow. Almost all available return is reachable with no intelligence at all, compressing the band in which learning can show value; and braking is not safe either, because \texttt{DiscreteMetaAction} exposes target speeds $[20,25,30]$, so a braking ego floors at $20$~m/s and still closes on slower traffic faster than a four-vehicle observation warns. That second point matters later. The trivial policy runs on a subset of the agents seeds, so the honest comparison is paired rather than two-sample: on the $45$ shared seeds it crashes where the network does not three times and the network crashes where it does not six times, McNemar $p{=}0.51$, while the network earns $+1.65$ more return per episode. Braking and learning are thus indistinguishable on safety here, which is an argument for the safety filters of Section~\ref{sec:discussion} rather than against them: only the filtered configurations clearly improve on doing nothing clever at all.
+
+\textbf{Evaluation noise.} Episode outcomes are nearly binary: for the automated policies a completed episode returns roughly 29 to 31 (an attentive human reaches 33 to 34), a crash episode far less. Small evaluation samples therefore produce wildly varying estimates, and in hindsight this third issue, not the learning algorithm, was the crux of the project (Section~\ref{sec:eval}).
+
+\section{Heuristic baseline}
+\label{sec:baseline}
+
+The baseline is a deterministic rule evaluated on the raw $5\times 5$ observation at every step. I describe it exhaustively so that it can be reproduced from this text alone.
+
+Let $e$ be the ego row and $v_1,\dots,v_4$ the other rows, each with relative coordinates $(x_i,y_i)$ and relative longitudinal speed $v_{x,i}$; a row with presence below $0.5$ is ignored. Empirically one lane width corresponds to $|y|\approx 0.33$ in normalized units. The rule uses five constants: same-lane band $Y_s{=}0.15$, danger distance $D_c{=}0.10$, comfort distance $D_m{=}0.25$, and a lane clearance window of $0.30$ ahead and $0.15$ behind; the adjacent right lane is the band $y\in(0.15,0.55)$ and the left lane $y\in(-0.55,-0.15)$.
+
+At each step I compute $d^\ast=\min\{x_i:|y_i|<Y_s,\ x_i>0\}$, the gap to the closest same-lane vehicle ahead ($d^\ast=\infty$ if none). The action is chosen by three priority levels:
+\begin{enumerate}
+  \item if $d^\ast<D_c$ (imminent collision): change to the right lane if its clearance window contains no visible vehicle, otherwise to the left lane under the same condition, otherwise \textsc{slower};
+  \item if $d^\ast<D_m$: \textsc{slower}, a preemptive gap opening;
+  \item otherwise the road ahead is clear: merge right if the ego is not already in the rightmost lane and the right window is clear (collecting the right lane bonus), else \textsc{faster}.
+\end{enumerate}
+
+The design is deliberately defensive. An earlier, more aggressive variant that attempted overtakes crashed in the majority of episodes precisely because of partial observability: a lane that looks clear in the observation may contain an unobserved vehicle. Restricting lane changes to wide verified windows and defaulting to braking brought the crash rate down to $\basecrash\%$ from a much higher figure, which makes the baseline a fair, non trivial benchmark rather than a straw man. On the held-out test seeds ($n{=}100$, same seeds as the agent) it achieves $\basemean\pm\basestd$ mean return at a $\basecrash\%$ crash rate; the large spread is the bimodality of episode outcomes noted above.
+
+\section{Learning algorithm}
+\label{sec:algo}
+
+\subsection{Choice and rationale}
+
+The state is a low-dimensional continuous vector and the action space is small and discrete; this is the textbook setting for value-based deep RL, so I implemented DQN \cite{mnih2015} in PyTorch with two standard refinements rather than adopting a policy-gradient method whose extra machinery this problem does not need.
+
+\emph{Double DQN} \cite{vanhasselt2016} computes the bootstrap target as
+\begin{equation}
+y = r + \gamma\, Q_{\theta^-}\!\bigl(s',\,\arg\max_a Q_\theta(s',a)\bigr)\,(1-\mathrm{done}),
+\end{equation}
+selecting the action with the online network $\theta$ and evaluating it with the target network $\theta^-$. This decoupling reduces the maximization bias of vanilla DQN, relevant here because the collision penalty makes the return distribution heavy-tailed and overestimating risky actions is exactly the failure mode to avoid.
+
+\emph{Dueling architecture} \cite{wang2016} decomposes $Q(s,a)=V(s)+A(s,a)-\frac{1}{|\mathcal{A}|}\sum_{a'}A(s,a')$. In free flowing traffic \textsc{idle} and \textsc{faster} have nearly identical values; separating the state value from the action advantages lets the network learn that a situation is safe independently of the specific action, which speeds up early learning.
+
+\subsection{Implementation}
+
+Two fully-connected layers of 128 ReLU units feed a value stream ($128{\to}64{\to}1$) and an advantage stream ($128{\to}64{\to}5$), with orthogonal initialization. Training uses Adam at $5\times10^{-4}$, $\gamma{=}0.99$, Huber loss, gradient-norm clipping at 1.0, batch size 64, a uniform replay buffer of $5\times10^4$ transitions, a warmup of 1000 transitions, and a \emph{hard} target copy every 400 gradient steps. I initially used Polyak averaging ($\tau{=}0.005$) and observed slow Q value drift with intermittent policy collapses; periodic hard copies removed the worst of these oscillations, consistent with soft updates letting transient errors of the online network leak continuously into the bootstrap target.
+
+Exploration is $\varepsilon$-greedy with a linear decay from 1.0 to 0.05. Because environment stepping dominates wall-clock time at this simulation frequency, I take two gradient updates per environment step, with the decay horizon and the target copy period expressed in gradient steps so that the schedule in environment steps is unchanged. Training runs $5\times10^4$ environment steps on \texttt{highway-v0} itself; an earlier attempt trained on the faster \texttt{highway-fast-v0} and evaluated on \texttt{highway-v0}, and the simulation frequency mismatch cost a substantial amount of crash rate, so I matched the two environments exactly. I did not preserve the logs of that comparison, so I report it as a design decision rather than as a measurement. The training loop checkpoints its complete state (network and target weights, optimizer, the full replay buffer, and the RNG states) with atomic rotated writes, so an interrupted cloud session resumes without losing learning progress. I should be precise about the limit of that claim: the environments own generator is not checkpointed and a resumed run reseeds the episode stream, so the resumption is faithful for the agent but not bit-identical for the environment. This proved necessary in practice on preemptible free-tier sessions.
+
+\section{Evaluation methodology}
+\label{sec:eval}
+
+Episode outcomes on this task are close to binary, which makes small-sample evaluation unusually treacherous. This section sets out the protocol and the two measurements that motivated it.
+
+\begin{figure}[t]
+\vskip 0.2in
+\begin{center}
+\centerline{\includegraphics[width=\columnwidth]{results/training_curve.pdf}}
+\caption{Learning against the baseline, over 2617 episodes ($5\times10^4$ steps). Training returns include $\varepsilon$-greedy exploration and understate the policy, so the greedy series (green) is overlaid; the dashed line is the heuristic measured to match, same training environment (\texttt{ego\_spacing}${=}2.0$) and selection seeds.}
+\label{fig:training}
+\end{center}
+\vskip -0.2in
+\end{figure}
+
+\begin{figure}[t]
+\vskip 0.2in
+\begin{center}
+\centerline{\includegraphics[width=\columnwidth]{results/eval_returns.pdf}}
+\caption{Greedy return on the fixed selection seeds, star marking the checkpoint chosen by the safety-weighted score. Ten episodes per point, so these values are systematically more optimistic than the held-out numbers of Table~\ref{tab:results}, which is the point of Section~\ref{sec:eval}.}
+\label{fig:eval}
+\end{center}
+\vskip -0.2in
+\end{figure}
+
+\textbf{Selection on a noisy criterion is biased upward.} I evaluate the greedy policy every fifty episodes on a fixed seed set and keep the checkpoint with the best safety-weighted score
+\begin{equation}
+S=\bar R-10\,\hat c,
+\label{eq:score}
+\end{equation}
+where $\bar R$ is the mean return and $\hat c$ the crash rate; the weight encodes that one extra crash per ten episodes must cost more than one point of mean return. The selected checkpoint reports $\selmean$ return at $\selcrash\%$ crashes. That figure is not an estimate of its performance. Taking the \emph{argmax} of a noisy quantity over dozens of checkpoints and then reporting that maximum is upward biased, the winner's curse: the periodic evaluations use ten episodes each, so for a policy with true crash probability $p{=}0.2$ the standard error of a single evaluation is $\sqrt{p(1-p)/10}\approx0.13$; observing zero crashes once across fifty two such evaluations is expected even for a mediocre policy. The selection score is a valid \emph{criterion for choosing} between checkpoints, but it is not a valid \emph{estimate} of performance.
+
+\textbf{Protocol.} I split the seeds three ways, exactly as one splits data. \emph{Training} uses seed 0. \emph{Selection} (seeds $12345{+}i$) is used only to choose the best checkpoint and to decide best versus last; that is what a validation set is for. \emph{Test} (seeds $90000{+}i$, disjoint, one hundred episodes) is touched exactly once, on the finally chosen model, and never used for any decision. The number I report is the test number, and only that.
+
+\textbf{The size of the effect.} The same weights evaluated on the test seeds give $\agentmean$ return at $\agentcrash\%$ crashes. The gap between $\selcrash\%$ and $\agentcrash\%$ is entirely a property of the protocol, not of the model, and it is large enough to invert a conclusion. Zero crashes in $N$ episodes bounds the true rate only below roughly $3/N$ at $95\%$ confidence.
+
+\textbf{One environment for every policy.} Baseline, training and evaluation all use the single configuration \texttt{ego\_spacing}${=}1.5$, and every number reported here is an evaluation in that environment. This matters because the parameter is not innocuous: measured at the environment default of $2.0$, the same agent looks better than it is.
+
+\textbf{The selection criterion saturates.} Twenty one of the fifty two periodic evaluations scored exactly zero crashes and ten checkpoints tie within one point of $S$: at ten episodes per evaluation the criterion cannot rank the candidates it was used to rank, and the choice among tied leaders is close to arbitrary. The late-training crash rates on the selection seeds oscillate across $0.0, 0.1, 0.3, 0.2, 0.6, 0.2, 0.4, 0.1, 0.7, 0.0$, so it also overstates matters to say the training curve looked healthy while the final weights were poor; Figure~\ref{fig:eval} shows visible instability, and a reader watching it would have had fair warning. Selection rescued the run, but on a criterion too noisy to deserve the credit.
+
+\begin{table}[t]
+\caption{Comparison on the TEST seed set ($90000{+}i$), $n{=}100$ episodes per automated policy in one identical environment (\texttt{ego\_spacing}${=}1.5$), baseline included. The manual row is $n{=}10$ and the holdout row uses the untouched block $50000{+}i$; neither is $n{=}100$. $S=\bar R-10\hat c$ as in Eq.~\ref{eq:score}; SE is the binomial standard error of the crash rate, and $\pm$ on returns is the standard deviation across episodes, not a standard error.}
+\label{tab:results}
+\vskip 0.15in
+\begin{center}
+\begin{scriptsize}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{lcccc}
+\toprule
+ & mean return & crash & SE & $S$ \\
+\midrule
+Manual control (human) & $33.41\pm0.50$ & $0\%$ & -- & 33.4 \\
+\midrule
+DQN + conservative & $29.33\pm1.57$ & $2.0\%$ & $1.4\%$ & 29.1 \\
+DQN + strict & $29.35\pm2.77$ & $6.0\%$ & $2.4\%$ & 28.8 \\
+DQN + smooth & $29.01\pm3.98$ & $9.0\%$ & $2.9\%$ & 28.1 \\
+DQN raw, test & $\agentmean\pm\agentstd$ & $\agentcrash\%$ & $3.0\%$ & 28.0 \\
+Heuristic baseline & $\basemean\pm\basestd$ & $\basecrash\%$ & $3.8\%$ & 24.7 \\
+DQN last iterate & $26.32\pm8.39$ & $31.0\%$ & $4.6\%$ & 23.2 \\
+\midrule
+DQN, selection (biased) & $\selmean$ & $\selcrash\%$ & -- & 30.1 \\
+\midrule
+\textbf{Conservative, holdout} & $\mathbf{29.13\pm2.68}$ & $\mathbf{1.0\%}$ & $1.0\%$ & \textbf{29.0} \\
+\bottomrule
+\end{tabular}
+\end{scriptsize}
+\end{center}
+\vskip -0.1in
+\end{table}
+
+\textbf{A fourth block for the filter choice.} The three safety filters of Section~\ref{sec:discussion} are compared on the $90000{+}i$ seeds, which also supplied the crash diagnosis and the choice of which filter to ship. Those seeds therefore act as a selection set for the filter, so the $2\%$ in Table~\ref{tab:results} carries the same upward bias as any selected quantity. I evaluated the chosen filter, unchanged, on a fourth block ($50000{+}i$, $n{=}100$) reserved for this single claim: it scores $29.13\pm2.68$ at $1.0\%$ crashes. That is the figure I claim for the system.
+
+\textbf{An alternative explanation, tested and rejected.} A referee might object that the selection and test blocks simply differ in difficulty, which would explain the gap without any winner's curse. This is checkable: I ran the heuristic, a fixed policy that no part of this project tunes, on both blocks. It crashes on $22.5\%$ of the selection seeds ($9$ of $40$) against $18.0\%$ of the test seeds, a difference of $4.5$ points at $z{=}0.61$, not significant and in the wrong direction for the objection. The selection block is, if anything, slightly harder, so the optimistic selection numbers are not explained by easy seeds and the winner's curse account stands.
+
+
+\textbf{Training and evaluation spacing.} The shipped weights predate this standardization and were trained at \texttt{ego\_spacing}${=}2.0$, while every evaluation uses $1.5$. The direction works against the reported result, since the agent learned in the sparser setting and is scored in the denser one, so the \agentcrash\% crash rate is conservative. Two consequences: \texttt{training.py} does not reproduce the shipped weights bit for bit, and the during-training curves were collected at $2.0$, so their baseline reference line is measured the same way ($27.35$, $n{=}40$).
+
+\section{Results}
+\label{sec:results}
+
+
+Learning is measured as described in Section~\ref{sec:eval}: periodic greedy evaluations on the fixed selection seeds during training (Figure~\ref{fig:eval}), against the baseline as a horizontal reference (Figure~\ref{fig:training}), with the final claim made once on the held out test set (Table~\ref{tab:results}). A second, manually driven baseline (\texttt{manual\_control.py}, keyboard control over ten episodes) is provided as required. Driven attentively it completes every episode at $33.41\pm0.50$ return and $0\%$ crashes, above all automated policies. My own rule of three applies to me too: zero crashes in ten episodes bounds the human rate only below roughly $26\%$, so the ceiling is established on return, not on safety. Since it is played interactively rather than on the fixed test seeds, I treat it not as a seed matched comparison but as an empirical performance ceiling: no policy here, learned or scripted, comes close to it on return, and I treat it as the practical ceiling for this observation and action interface rather than as a proven optimum.
+
+Three readings of Table~\ref{tab:results}. First, the selection row and the test row are the same weights measured on different seeds; the residual gap between them ($0\%$ versus $\agentcrash\%$ crashes) is the selection bias made concrete, and it is the honest row that counts. Second, the safety-weighted score $S$ orders the policies cleanly: conservative ($29.1$), strict ($28.8$) and smooth ($28.1$) filters above the raw network ($28.0$), all above the baseline ($24.7$). The raw network improves on the baseline in mean return ($28.96$ versus $26.47$) and crash rate ($10\%$ versus $18\%$). Because every policy runs on the identical seed set, the correct instruments are paired and more powerful than the two-proportion tests I first used: McNemars exact test on discordant episodes, and a paired $t$ on returns. Against the baseline, the conservative filter turns $17$ baseline crashes into $1$ ($p{=}0.0001$), strict $16$ into $4$ ($p{=}0.012$), smooth $16$ into $7$ ($p{=}0.093$), raw $17$ into $9$ ($p{=}0.169$). Under Holm correction only the two stronger filters survive at $5\%$: the learned policy alone does not demonstrably improve safety over the heuristic, the filtered configurations do. On return every configuration beats the baseline (paired $t$ from $2.90$ to $4.27$, $+2.5$ to $+2.9$). The two filters are not separable ($6$ against $2$ discordant, $p{=}0.29$). Per-episode outcomes ship in \texttt{results/episode\_vectors.json}; \texttt{paired\_tests.py} recomputes every statistic here from them, and \texttt{results/crash\_rate.pdf} traces crashes over training. Third, checkpoint selection was decisive: the shipped checkpoint is a mid-training iterate at $\varepsilon\approx0.53$, step $20{,}801$ of $50{,}000$, so the final three fifths of the budget were not merely wasted but harmful. The last iterate, tested on the same seeds, scores $23.2$ at a $31\%$ crash rate, below the baseline, so shipping the final weights would have produced a worse-than-baseline agent. I resist the gloss that this happened invisibly: Section~\ref{sec:eval} records that the periodic evaluations were openly unstable in the final third, so the warning was on the page. The narrower point stands: the Huber loss (Figure~\ref{fig:loss}) cannot serve for selection, whereas the evaluation score at least tracks the optimized quantity.
+
+
+\begin{figure}[t]
+\vskip 0.2in
+\begin{center}
+\centerline{\includegraphics[width=\columnwidth]{results/loss_curve.pdf}}
+\caption{Huber loss during training (linear scale, sampled every 100 environment steps, i.e.\ every 200 gradient updates at the two updates per step ratio). The loss does not converge to zero and drifts upward as surviving episodes lengthen the bootstrapped targets; an increasing loss here does not indicate divergence, and it is why model selection uses the evaluation score rather than the loss.}
+\label{fig:loss}
+\end{center}
+\vskip -0.2in
+\end{figure}
+
+
+
+
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Why the agent wins, and by how much}
+
+The heuristic reacts to one scalar, the nearest same-lane gap, with a fixed geometric lane-change test; the network conditions on all four observed vehicles' relative positions and velocities, so it can distinguish a slow car being approached quickly from one moving at the ego's speed and time overtakes accordingly. On the test set this shows up where the extra information should matter: with the safety filter, fewer crashes at higher speed and a much smaller return spread. The margin over the heuristic is honest but bounded. Two references frame it. Below, the always-brake policy reaches a return near 27 with no learning at all, so the exploitable band above a trivial policy is narrow. Above, attentive manual play reaches $33.4$ return (Table~\ref{tab:results}), an empirical ceiling on return that no automated policy here approaches, though its $0\%$ over ten episodes is too small a sample to bound the human crash rate tightly; the agent and all three filters sit between these two references on return, closer to the human than to the trivial policy. On crashes the picture is less flattering and worth stating plainly: the raw network at $10\%$ is no better than the constant-braking reference at $6.7\%$, so the learned policy buys its extra return without buying safety, and only the filtered configurations improve on both axes at once. With near-binary episode outcomes, the crash rate standard error at \agenttestN{} episodes is about three points for a single policy, enough, on the paired tests of Section~\ref{sec:results}, to resolve the two stronger filters from the baseline while the gap between them remains within noise ($p{=}0.29$).
+
+\subsection{Driving the crash rate down with a safety filter}
+
+To reduce collisions further I instrumented the agent's behavior and post-processed its actions with a small deterministic filter, keeping the network as the primary policy. The action histogram of the raw greedy policy, measured over 444 steps and shipped as \texttt{results/action\_histogram.json}, shows lane changes on $37.4\%$ of steps ($4.7\%$ left, $32.7\%$ right) at a mean normalized speed of $0.267$. To separate the two candidate causes I probed the speed cap on its own, adding it to the strict filter without the lane-change restriction (\texttt{CappedStrictFilter}). Over eighteen test episodes it crashes twice, $11.1\%$ with a Wilson interval of $[3.1, 32.8]\%$, against one crash for the strict filter on the same eighteen seeds. The probe is underpowered: it fails to show a benefit from the cap and cannot exclude one. The weight rests on the paired comparison at $n{=}100$, where the conservative filter, adding cap \emph{and} lane-change restriction, converts six strict crashes into two. The lane-change restriction is the attribution I defend: a lane that looks clear in the four-vehicle observation can be entered into an unobserved car. I therefore built the filter in three increments of rising conservatism, so that the contribution of each rule is visible. The chain is not a clean ablation and I flag that rather than overclaim it: \texttt{StrictFilter} adds pre-braking but also retunes the same-lane band ($0.12$ to $0.13$) and the braking distance ($0.09$ to $0.13$), so the smooth to strict step moves two things at once, and the strict to conservative step bundles the speed cap with the lane-change restriction. The \emph{smooth} filter applies only a lane-change cooldown and emergency braking; it gives $29.01\pm3.98$ return at $9\%$ crashes, barely better than the raw network, which shows that suppressing merely the rapid oscillation between lanes is not what helps. The \emph{strict} filter adds pre-braking near slow traffic; over one hundred test episodes it gives $29.35\pm2.77$ return at $6\%$ crashes. The \emph{conservative} filter additionally caps speed and restricts lane changes to genuine emergencies (a same-lane vehicle inside the braking distance); it reaches $29.33\pm1.57$ return at $2\%$ crashes ($2$ of $100$) with a much tighter return spread. The ablation is monotone in crash rate, $10\%$, $9\%$, $6\%$, $2\%$, and the largest single drop comes from the last increment, the one that restricts discretionary lane changes. All three filters improve return and safety simultaneously over the raw network. At $n{=}40$ the two were indistinguishable and I framed them as points on a speed-safety frontier; at $n{=}100$ that fails. Conservative dominates strict, matching its return ($29.33$ versus $29.35$, inside noise) at a third of the crash rate, so no dimension favours strict and conservative is what I would ship. I report all three because the progression is what identified lane changes, rather than speed, as the source of the residual crashes: the smooth row is the control that rules out oscillation damping, and the conservative row supplies the effect.
+
+\subsection{The largest uncontrolled variance is the one I did not control}
+
+This paper argues that evaluation variance dominates, and controls it carefully: four disjoint seed blocks, a hundred episodes per row, standard errors throughout. It then rests every conclusion on \emph{one} training run. Training seed is routinely a larger source of spread than evaluation seed \cite{henderson2018,agarwal2021}, and I did not sample it. The honest scope is therefore narrower than the phrasing suggests: "the agent beats the baseline" means \emph{this} run, selected by \emph{this} criterion, does so on held-out seeds. Whether the procedure does in expectation is untested, and more seeds would be my first additional experiment. A paper making my argument has no business leaving its largest variance term unmentioned. No hyperparameter search was performed: the values in Section~\ref{sec:algo} were fixed from the literature and two documented corrections, so nothing here was tuned on any seed block.
+
+\subsection{Possible improvements}
+
+In order of expected value, revised by the crash diagnosis: since every diagnosed collision was with an already-visible vehicle, enlarging the observation is \emph{not} the first lever. I would attack the decision instead, with a risk-sensitive objective that prices committing to a gap against the lost braking option; then more training seeds; then a recurrent encoder \cite{hausknecht2015} for the rear blind spot; prioritized experience replay \cite{schaul2016} to revisit the rare pre-crash transitions more often; and evaluating on several hundred test episodes to tighten the crash rate confidence interval. I would attempt the observation change and the larger test set first.
+
+\section{Conclusion}
+
+A Double Dueling DQN agent trained on \texttt{highway-v0} outperforms a carefully specified defensive heuristic on return, but the paired tests show it does not significantly improve safety on its own: at $10\%$ crashes it is indistinguishable from a policy that simply brakes. What closes that gap is a small rule-based filter over the networks actions, which brings crashes to $1.0\%$ on a reserved seed block while raising return, and the three-step ablation locates the effect in the restriction of discretionary lane changes rather than in the speed cap. A crash-level diagnosis explains the mechanism: in every collision examined the striking vehicle was already present in the observation, so the residual failures are of decision, not perception, and enlarging the observation would not be the first thing to try. Two limitations bound all of this. The conclusions rest on a single training run, which is the largest variance term left uncontrolled; and, in a task whose episode outcomes are near-binary, the evaluation protocol determines both which model one ships and what may be claimed for it, a point sharp enough here that a ten-episode measurement of the shipped model reads $0\%$ where a hundred-episode one reads $10\%$.
+
+\bibliography{main}
+\bibliographystyle{icml2021}
+
+\end{document}

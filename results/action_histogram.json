@@ -1,0 +1,13 @@
+{
+  "LANE_LEFT": 0.0473,
+  "IDLE": 0.1667,
+  "LANE_RIGHT": 0.3266,
+  "FASTER": 0.0676,
+  "SLOWER": 0.3919,
+  "lane_change_share": 0.3739,
+  "mean_ego_vx": 0.2669,
+  "steps": 444,
+  "episodes": 12,
+  "seed_base": 90000,
+  "note": "raw greedy policy, no filter, canonical env (ego_spacing 1.5)"
+}

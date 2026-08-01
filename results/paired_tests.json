@@ -1,0 +1,74 @@
+{
+  "vs_baseline": {
+    "raw": {
+      "baseline_only_crashes": 17,
+      "policy_only_crashes": 9,
+      "mcnemar_exact_p": 0.168638,
+      "return_diff": 2.486,
+      "paired_t": 2.9,
+      "paired_t_p": 0.004583,
+      "n": 100,
+      "holm_adjusted_p": 0.186279,
+      "significant_at_5pct": false
+    },
+    "smooth": {
+      "baseline_only_crashes": 16,
+      "policy_only_crashes": 7,
+      "mcnemar_exact_p": 0.09314,
+      "return_diff": 2.539,
+      "paired_t": 3.21,
+      "paired_t_p": 0.001806,
+      "n": 100,
+      "holm_adjusted_p": 0.186279,
+      "significant_at_5pct": false
+    },
+    "strict": {
+      "baseline_only_crashes": 16,
+      "policy_only_crashes": 4,
+      "mcnemar_exact_p": 0.011818,
+      "return_diff": 2.88,
+      "paired_t": 3.75,
+      "paired_t_p": 0.000294,
+      "n": 100,
+      "holm_adjusted_p": 0.035454,
+      "significant_at_5pct": true
+    },
+    "conservative": {
+      "baseline_only_crashes": 17,
+      "policy_only_crashes": 1,
+      "mcnemar_exact_p": 0.000145,
+      "return_diff": 2.855,
+      "paired_t": 4.27,
+      "paired_t_p": 4.5e-05,
+      "n": 100,
+      "holm_adjusted_p": 0.00058,
+      "significant_at_5pct": true
+    }
+  },
+  "conservative_vs_strict": {
+    "strict_only_crashes": 6,
+    "conservative_only_crashes": 2,
+    "mcnemar_exact_p": 0.289062
+  },
+  "always_brake_vs_raw": {
+    "brake_only_crashes": 3,
+    "raw_only_crashes": 6,
+    "mcnemar_exact_p": 0.507812,
+    "return_diff": 1.648,
+    "paired_t": 1.69,
+    "paired_t_p": 0.097169,
+    "n": 45,
+    "note": "Shared seeds 90000+i; paired test, not two-sample."
+  },
+  "speed_cap_probe": {
+    "crashes": 2,
+    "n": 18,
+    "crash_rate": 0.1111,
+    "wilson_95_ci": [
+      0.031,
+      0.328
+    ],
+    "strict_crashes_same_seeds": 1,
+    "note": "Underpowered: fails to show a benefit from the cap, too small to exclude one."
+  }
+}

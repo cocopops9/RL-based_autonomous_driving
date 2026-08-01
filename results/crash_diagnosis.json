@@ -1,0 +1,38 @@
+[
+  {
+    "seed": 90004,
+    "rel_x": 18.48,
+    "was_observed": true,
+    "n_observed": 4
+  },
+  {
+    "seed": 90011,
+    "rel_x": 29.69,
+    "was_observed": true,
+    "n_observed": 4
+  },
+  {
+    "seed": 90017,
+    "rel_x": 24.95,
+    "was_observed": true,
+    "n_observed": 4
+  },
+  {
+    "seed": 90019,
+    "rel_x": 18.42,
+    "was_observed": true,
+    "n_observed": 4
+  },
+  {
+    "seed": 90020,
+    "rel_x": 16.91,
+    "was_observed": true,
+    "n_observed": 4
+  },
+  {
+    "seed": 90034,
+    "rel_x": 18.42,
+    "was_observed": true,
+    "n_observed": 4
+  }
+]

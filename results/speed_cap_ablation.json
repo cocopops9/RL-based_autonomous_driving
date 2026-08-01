@@ -1,0 +1,14 @@
+{
+  "mean_return": 27.692,
+  "crash_rate": 0.111,
+  "crashes": 2,
+  "n": 18,
+  "seed_base": 90000,
+  "wilson_95_ci": [
+    0.031,
+    0.328
+  ],
+  "strict_crashes_same_seeds": 1,
+  "config": "CappedStrictFilter: StrictFilter + speed cap 0.30, no lane-change restriction",
+  "note": "Underpowered probe. Written by run_final_eval.py as speed_cap_probe (n fixed at 18); Wilson interval and the same-seed comparison by paired_tests.py."
+}
